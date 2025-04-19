@@ -1,0 +1,471 @@
+1-Mapreduce
+
+mapper.py
+--------------------------------------------------------------------------------------------------------------------
+#!/usr/bin/env python3
+import sys
+for line in sys.stdin:
+    line = line.strip()
+    words = line.split()
+
+    for word in words:
+        print( '%s\t%s' % (word, 1))
+-----------------------------------------------------------------------------------------------------------------------------------
+
+
+reducer.py
+-----------------------------------------------------------------------------------------------------------------------------
+#!/usr/bin/env python3
+from operator import itemgetter
+import sys
+
+current_word = None
+current_count = 0
+word = None
+
+for line in sys.stdin:
+    line = line.strip()
+    word, count = line.split('\t', 1)
+    try:
+        count = int(count)
+    except ValueError:
+        continue
+
+    if current_word == word:
+        current_count += count
+    else:
+        if current_word:
+            print('%s\t%s' % (current_word, current_count))
+        current_word = word
+        current_count = count
+
+if current_word == word:
+    print('%s\t%s' % (current_word, current_count))
+
+
+-----------------------------------------------------------------------------------------------------------------------------------
+
+Run;-
+
+cat testfile | python3 mapper.py | sort | python3 reducer.py
+
+hadoop jar $HADOOP_HOME/share/hadoop/tools/lib/hadoop-streaming-*.jar \
+-input testfile \
+-output wordcount \
+-mapper mapper.py \
+-reducer reducer.py \
+-file mapper.py \
+-file reducer.py
+
+
+/To check the output
+hadoop fs -ls
+
+//wordcount
+hadoop fs -ls wordcount
+hadoop fs -cat wordcount/part-00000
+
+
+
+
+
+2) Normalization Mapreduce
+
+norm_mapper,py
+--------------------------------------------------------------------------------------------------------------------------------------
+#!/usr/bin/env python3
+
+import sys
+import nltk
+import string
+
+
+nltk.download('stopwords', quiet=True)
+
+class Normalize:
+    stopwords = set(nltk.corpus.stopwords.words("english"))
+    punctuation = set(string.punctuation)
+
+    def exclude(self, token):
+        return token in self.punctuation or token in self.stopwords
+
+    def map(self):
+        for line in sys.stdin:
+            line = line.strip()
+            words = line.split()
+            for word in words:
+                word = word.lower().strip(string.punctuation)
+                if word and not self.exclude(word):
+                    print(f"{word}\t1")
+
+if __name__ == "__main__":
+    mapper = Normalize()
+    mapper.map()
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+norm_reducer.py
+--------------------------------------------------------------------------------------------------------------------------------------------
+#!/usr/bin/env python3
+
+import sys
+
+def main():
+    current_word = None
+    current_count = 0
+
+    for line in sys.stdin:
+        line = line.strip()
+        word, count = line.split('\t', 1)
+
+        try:
+            count = int(count)
+        except ValueError:
+            continue
+
+        if current_word == word:
+            current_count += count
+        else:
+            if current_word:
+                print(f"{current_word}\t{current_count}")
+            current_word = word
+            current_count = count
+
+    if current_word == word:
+        print(f"{current_word}\t{current_count}")
+
+if __name__ == "__main__":
+    main()
+
+-----run-------------------------------------------------------------------------------------------------
+
+cat testfile | python3 norm_mapper.py | sort | python3 norm_reducer.py
+
+------------------------------------------------------------------------------------------------------------------------------
+ 
+  3)Bigram Normalization
+
+bigram_mapper.py
+----------------------------------------------------------------------------------------------------------------------------
+#!/usr/bin/env python3
+import sys
+import nltk
+import string
+
+nltk.download('punkt_tab')
+
+class Mapper:
+    def __init__(self):
+        self.stopwords = set(nltk.corpus.stopwords.words("english"))
+        self.punctuation = set(string.punctuation)
+
+    def exclude(self, token):
+        return token in self.punctuation or token in self.stopwords
+
+    def normalize(self, token):
+        return token.lower()
+
+    def tokenize(self, value):
+        for token in nltk.word_tokenize(value):
+            token = self.normalize(token)
+            if not self.exclude(token):
+                yield token
+
+    def map(self):
+        for line in sys.stdin:
+            tokens = list(self.tokenize(line))
+            for bigram in nltk.bigrams(tokens):
+                print(f"{bigram[0]}_{bigram[1]}\t1")
+
+if __name__ == "__main__":
+    Mapper().map()
+
+-----------------------------------------------------------------------------------------------------------------
+
+bigram_reducer.py
+
+---------------------------------------------------------------------------------------------------------------
+#!/usr/bin/env python3
+import sys
+
+current_bigram = None
+current_count = 0
+
+for line in sys.stdin:
+    line = line.strip()
+    bigram, count = line.split('\t', 1)
+    try:
+        count = int(count)
+    except ValueError:
+        continue
+
+    if bigram == current_bigram:
+        current_count += count
+    else:
+        if current_bigram:
+            print(f"{current_bigram}\t{current_count}")
+        current_bigram = bigram
+        current_count = count
+
+if current_bigram:
+    print(f"{current_bigram}\t{current_count}")
+
+---run----------------------------------------------------------------------------------------------------------------------
+
+cat testfile | python3 bigram_mapper.py | sort | python3 bigram_reducer.py
+
+Pract 4 Spark word count---------------------------------------------------------
+
+#in terminal
+pyspark
+
+
+#in shell
+text=sc.textFile("sp_data.txt")
+print(text)
+
+from operator import add
+def tokenize(text):
+	return text.split()
+
+words=text.flatMap(tokenize)
+spark_wc=words.map(lambda x:(x,1))
+
+print(spark_wc.toDebugString())
+
+counts=spark_wc.reduceByKey(add)
+counts.saveAsTextFile("spark_wc")
+ 
+#in terminal
+
+ls
+ls spark_wc
+head spark_wc/part-00000
+
+
+
+Pract 5 Implement aggregate function using Spark---------------------------------------------
+
+
+wc_sparkapp.py--------
+
+from pyspark import SparkConf, SparkContext
+
+def main():
+    conf = SparkConf().setAppName("Word Count App")
+    sc = SparkContext(conf=conf)
+
+    
+    input_file = sc.textFile("/home/hadoop/sp_data.txt")
+
+    
+    counts = input_file.flatMap(lambda line: line.split()) \
+                       .map(lambda word: (word, 1)) \
+                       .reduceByKey(lambda a, b: a + b)
+
+    
+    counts.saveAsTextFile("spark_wordcount")
+
+    
+    sc.stop()
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+$ spark-submit wc_sparkapp.py
+
+
+$ ls
+$ ls spark_wordcount/
+$ cat spark_wordcount/part-00000
+
+Pract. Hive---------------------------------------------------------------------------------------
+
+Initiate derby database
+$HIVE_HOME/bin/schematool\ -dbType derby -initschema
+
+
+Open hive client shell on ubuntu
+$cd $HIVE_HOME/bin
+$hive
+
+
+Create Database
+hive >create database demo:
+
+Change the database in the demo
+hive > use demo
+
+
+Create table
+hive > create table demo(emp_id,emp_name varchar(10),salary int):
+    >row format delimited
+    >fields terminated by '.',
+
+
+
+Load data to csv file
+hive>load data local inpath '/home/hadoop/Document/emp_tabble.csv' into table demo.employees
+
+
+
+Basic aggregation
+hive> select avg(salary)from demo.employees;
+
+Pract Sqoop------------------------------------------------------------------------------
+
+Open mysql interactive interface
+$sudo mysql
+
+Create database
+mysql>create database demo;
+mysql>grant all privileges on demo.*to'hadoop@localhost'
+mysql>grant all privileges on demo.*to'hadoop@localhost'
+mysql> use demo;
+
+
+Download apache sqoop and extract it
+
+Move extracted folder to usr/local
+$sudo mv sqoop -1.4.7 /usr/local/sqoop
+
+
+Set enviroment variable
+$sudo nano ~/.bashrc:
+    export SQOOP_HOME = /usr/local/sqoop
+    export PATH = $PATH :$SQOOP_HOME/bin
+
+
+Download mysql connector and extract it
+
+Move extracted file in usr/local/sqoop/lib
+$sudo mv_mysql_connector/j.8.0.32/usr/local/sqoop/lib
+
+
+To check the sqoop version
+$sqoop_version
+
+
+Create employee table in mysql
+$mysql -u hadoop
+
+
+mysql>create table employee(emp_name varchar,emp_id int,emp_salary int)
+
+Import data to sqoopm
+
+hadoop@ubuntu:/usr/local/sqoop/bin $sqoop
+import --connect jdbc: MySQL://localhost /demo
+--username Hadoop --table employee -ml
+
+
+To verify the imported data in HDFS
+$hadoop fs_ls
+
+
+$hadoop fs -cat employee/part-m-00000
+
+
+Pract Hbase-------------------------------------------------------------------------------
+
+----Creating Table-----------------------------------------------------------------------
+
+create 'linkshare', 'link'
+
+disable 'linkshare'
+
+enable 'linkshare'
+
+describe 'linkshare'
+
+----Inserting data with put----------------------------------------------------------------
+
+put 'linkshare', 'org.hbase.www', 'link:title', 'Apache HBase'
+put 'linkshare', 'org.hadoop.www', 'link:title', 'Apache Hadoop'
+put 'linkshare', 'com.oreilly.www', 'link:title', 'O\'Reilly.com'
+
+incr 'linkshare', 'org.hbase.www', 'statistics:share', 1
+incr 'linkshare', 'org.hbase.www', 'statistics:like', 1
+incr 'linkshare', 'org.hbase.www', 'statistics:share', 1
+
+get_counter 'linkshare', 'org.hbase.www', 'statistics:share'
+get_counter 'linkshare', 'org.hbase.www', 'statistics:like'
+
+----Get row or cell values---------------------------------------------------------------------------
+
+
+get 'linkshare', 'org.hbase.www'
+
+get 'linkshare', 'org.hbase.www', {COLUMN => 'link:title'}
+get 'linkshare', 'org.hbase.www', {COLUMN => ['link:title','statistics:share']}
+
+
+get 'linkshare', 'org.hbase.www', {TIMERANGE => [1399887705673,1400133976734]}
+
+get 'linkshare', 'org.hbase.www', {COLUMN => 'statistics:share',VERSIONS => 2}
+
+----Scan rows----------------------------------------------------------------------------------------
+
+scan 'linkshare'
+scan 'linkshare', {COLUMNS => ['link:title'], STARTROW => 'org.hbase.www'}
+
+scan 'linkshare', {COLUMNS => ['link:title'], STARTROW => 'org'}
+
+
+
+-----Filters------------------------------------------------------------------------
+
+
+import org.apache.hadoop.hbase.util.Bytes
+import org.apache.hadoop.hbase.filter.SingleColumnValueFilter
+import org.apache.hadoop.hbase.filter.BinaryComparator
+import org.apache.hadoop.hbase.filter.CompareFilter
+
+
+
+likeFilter = SingleColumnValueFilter.new(Bytes.toBytes('statistics'),
+Bytes.toBytes('like'),
+CompareFilter::CompareOp.valueOf('GREATER_OR_EQUAL'),
+BinaryComparator.new(Bytes.toBytes(10)))
+
+likeFilter.setFilterIfMissing(true)
+
+
+Pract FLume---------------------------------------------------------------------------------------
+
+flume version
+
+----agent1.conf-----------------------------------------------------------------------------------
+
+agent1.sources = tail
+agent1.channels = Channel2
+agent1.sinks = sink1
+
+
+agent1.sources.tail.type=spooldir
+agent1.sources.tail.spoolDir=/tmp/flume_data
+agent1.sources.tail.channels = Channel2
+
+
+agent1.channels.Channel2.type = memory
+
+
+agent1.sinks.sink1.channel = Channel2
+agent1.sinks.sink1.type = hdfs
+agent1.sinks.sink1.hdfs.path = hdfs://localhost:9000/flume01
+agent1.sinks.sink1.hdfs.fileType = DataStream
+agent1.sinks.sink1.hdfs.rollInterval = 60
+agent1.sinks.sink1.hdfs.rollSize = 0
+agent1.sinks.sink1.hdfs.rollCount = 0
+
+
+---------run in terminal--------------------------------------------------------------------------
+
+flume-ng agent -n collector --conf /usr/local/flume/conf -f ./agent1.conf
+
+
+
+
